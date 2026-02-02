@@ -1,0 +1,12 @@
+# 是否开启推送功能
+enablePush: true
+# 检查新公告的间隔时间（秒），建议不低于120秒
+checkInterval: 180
+# 最大回溯天数，只推送最近7天内的公告
+maxDaysBack: 7
+# 启用 Windows 平台公告推送
+enableWindows: true
+# 启用 iOS 平台公告推送
+enableIOS: false
+# 启用 Android 平台公告推送
+enableAndroid: false

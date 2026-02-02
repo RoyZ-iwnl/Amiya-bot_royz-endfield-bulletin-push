@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "enablePush": {
+      "type": "boolean",
+      "title": "开启推送",
+      "description": "是否开启 Endfield 游戏公告自动推送功能。"
+    },
+    "checkInterval": {
+      "type": "integer",
+      "title": "检查间隔（秒）",
+      "description": "定时检查新公告的间隔时间，建议不要设置得太短。",
+      "minimum": 60
+    },
+    "maxDaysBack": {
+      "type": "integer",
+      "title": "最大回溯天数",
+      "description": "只推送最近N天内的公告，超过此天数的公告将被忽略。",
+      "minimum": 1,
+      "maximum": 30
+    },
+    "enableWindows": {
+      "type": "boolean",
+      "title": "启用 Windows 平台",
+      "description": "是否监听 Windows 平台的游戏公告。"
+    },
+    "enableIOS": {
+      "type": "boolean",
+      "title": "启用 iOS 平台",
+      "description": "是否监听 iOS 平台的游戏公告。"
+    },
+    "enableAndroid": {
+      "type": "boolean",
+      "title": "启用 Android 平台",
+      "description": "是否监听 Android 平台的游戏公告。"
+    }
+  }
+}
