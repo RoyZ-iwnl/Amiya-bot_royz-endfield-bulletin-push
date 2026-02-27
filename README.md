@@ -24,4 +24,12 @@
 
 - `兔兔查看推送平台` - 查看当前启用的推送平台列表
 
+## 更新日志
+
+### 1.1
+- 修了api的参数，以获取完整公告
+
+### 1.2
+- 修复纯图片公告的显示
+
 #### [仓库地址](https://github.com/RoyZ-iwnl/Amiya-bot_royz-endfield-bulletin-push)

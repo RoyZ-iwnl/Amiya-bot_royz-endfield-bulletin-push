@@ -25,13 +25,20 @@ IMG_SRC_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-BULLETIN_PREFACE_TEXT = '来自《终末地》的最新游戏公告：'
+BULLETIN_PREFACE_TEXT = '来自《明日方舟：终末地》的最新游戏公告：'
 
-# Endfield API 端点
-ENDFIELD_APIS = {
-    'Windows': 'https://game-hub.hypergryph.com/bulletin/v2/aggregate?lang=zh-cn&platform=Windows&channel=1&type=1&code=endfield_5SD9TN&hideDetail=0',
-    'iOS': 'https://game-hub.hypergryph.com/bulletin/v2/aggregate?lang=zh-cn&platform=iOS&channel=1&type=1&code=endfield_5SD9TN&hideDetail=0',
-    'Android': 'https://game-hub.hypergryph.com/bulletin/v2/aggregate?lang=zh-cn&platform=Android&channel=1&type=1&code=endfield_5SD9TN&hideDetail=0',
+# Endfield API 端点 - 检查更新时使用（hideDetail=1，只获取基本信息）
+ENDFIELD_APIS_CHECK = {
+    'Windows': 'https://game-hub.hypergryph.com/bulletin/v2/aggregate?lang=zh-cn&platform=Windows&channel=1&type=0&code=endfield_5SD9TN&hideDetail=1',
+    'iOS': 'https://game-hub.hypergryph.com/bulletin/v2/aggregate?lang=zh-cn&platform=iOS&channel=1&type=0&code=endfield_5SD9TN&hideDetail=1',
+    'Android': 'https://game-hub.hypergryph.com/bulletin/v2/aggregate?lang=zh-cn&platform=Android&channel=1&type=0&code=endfield_5SD9TN&hideDetail=1',
+}
+
+# Endfield API 端点 - 实际获取详情时使用（hideDetail=0，获取完整内容）
+ENDFIELD_APIS_DETAIL = {
+    'Windows': 'https://game-hub.hypergryph.com/bulletin/v2/aggregate?lang=zh-cn&platform=Windows&channel=1&type=0&code=endfield_5SD9TN&hideDetail=0',
+    'iOS': 'https://game-hub.hypergryph.com/bulletin/v2/aggregate?lang=zh-cn&platform=iOS&channel=1&type=0&code=endfield_5SD9TN&hideDetail=0',
+    'Android': 'https://game-hub.hypergryph.com/bulletin/v2/aggregate?lang=zh-cn&platform=Android&channel=1&type=0&code=endfield_5SD9TN&hideDetail=0',
 }
 
 
@@ -115,6 +122,7 @@ class BulletinItem(BaseModel):
     content: str
     start_at: int
     platform: str
+    link: str = ''  # 图片类公告的跳转链接
 
 
 # ----------------- 数据库模型 -----------------
@@ -143,7 +151,7 @@ class EndfieldBulletinPluginInstance(AmiyaBotPluginInstance):
 
 bot = EndfieldBulletinPluginInstance(
     name='终末地游戏公告推送',
-    version='1.0',
+    version='1.2',
     plugin_id='royz-endfield-bulletin-push',
     plugin_type='',
     description='定时监听并推送终末地多平台游戏公告',
@@ -159,9 +167,13 @@ last_check_timestamp = 0.0
 
 
 # ----------------- 核心逻辑 -----------------
-async def fetch_bulletin_from_platform(platform: str) -> Optional[List[BulletinItem]]:
-    """从指定平台获取公告列表"""
-    api_url = ENDFIELD_APIS.get(platform)
+async def fetch_bulletin_from_platform(platform: str, detail: bool = True) -> Optional[List[BulletinItem]]:
+    """
+    从指定平台获取公告列表
+    :param platform: 平台名称
+    :param detail: 是否获取详细内容（True=hideDetail=0，False=hideDetail=1）
+    """
+    api_url = (ENDFIELD_APIS_DETAIL if detail else ENDFIELD_APIS_CHECK).get(platform)
     if not api_url:
         log.error(f"未知平台: {platform}")
         return None
@@ -187,14 +199,25 @@ async def fetch_bulletin_from_platform(platform: str) -> Optional[List[BulletinI
 
         for item in bulletin_list:
             try:
-                html_content = item.get('data', {}).get('html', '')
+                item_data = item.get('data', {}) or {}
+                html_content = item_data.get('html', '')
+                item_link = ''
+
+                # 处理纯图片类型公告（displayType=picture）
+                if not html_content and item.get('displayType') == 'picture':
+                    img_url = item_data.get('url', '')
+                    item_link = item_data.get('link', '')
+                    if img_url:
+                        html_content = f'<img src="{img_url}" style="max-width:100%;">'
+
                 bulletin = BulletinItem(
                     cid=item.get('cid', ''),
                     title=item.get('title', ''),
                     header=item.get('header', ''),
                     content=html_content,
                     start_at=item.get('startAt', 0),
-                    platform=platform
+                    platform=platform,
+                    link=item_link,
                 )
                 bulletins.append(bulletin)
             except Exception as e:
@@ -228,12 +251,14 @@ async def fetch_recent_bulletins(force: bool = False) -> List[Tuple[BulletinItem
     bulletins_list = []
 
     for platform in enabled_platforms:
-
-        bulletins = await fetch_bulletin_from_platform(platform)
-        if not bulletins:
+        # 第一阶段：使用 hideDetail=1 快速检查是否有新公告
+        bulletins_check = await fetch_bulletin_from_platform(platform, detail=False)
+        if not bulletins_check:
             continue
 
-        for bulletin in bulletins:
+        # 筛选出需要获取详情的公告 ID
+        new_bulletin_ids = []
+        for bulletin in bulletins_check:
             # 检查时间戳，忽略超过指定天数的公告
             if bulletin.start_at < cutoff_time:
                 continue
@@ -244,8 +269,24 @@ async def fetch_recent_bulletins(force: bool = False) -> List[Tuple[BulletinItem
                 if EndfieldBulletinRecord.get_or_none(bulletin_id=record_key):
                     continue
                 log.info(f"发现新公告: [{platform}] {bulletin.title}")
+                new_bulletin_ids.append(bulletin.cid)
             else:
                 log.info(f"强制获取公告: [{platform}] {bulletin.title}")
+                new_bulletin_ids.append(bulletin.cid)
+
+        # 如果没有新公告，跳过该平台
+        if not new_bulletin_ids:
+            continue
+
+        # 第二阶段：使用 hideDetail=0 获取完整详情
+        bulletins_detail = await fetch_bulletin_from_platform(platform, detail=True)
+        if not bulletins_detail:
+            continue
+
+        # 只处理需要的公告
+        for bulletin in bulletins_detail:
+            if bulletin.cid not in new_bulletin_ids:
+                continue
 
             # 处理图片内联
             processed_content = bulletin.content
@@ -367,6 +408,8 @@ async def manual_check(data: Message):
                 height=1,
             )
         )
+        if bulletin.link:
+            await data.send(Chain(data, at=False).text(f'相关链接：{bulletin.link}'))
         # 添加推送间隔
         await asyncio.sleep(2)
 
@@ -414,6 +457,11 @@ async def execute_bulletin_push():
                 ),
                 channel_id=channel_id,
             )
+            if bulletin.link:
+                await target_instance.send_message(
+                    Chain().text(f'相关链接：{bulletin.link}'),
+                    channel_id=channel_id,
+                )
         except Exception as e:
             log.error(f"推送到群组 {channel_id} 失败: {e}")
 
